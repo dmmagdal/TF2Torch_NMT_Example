@@ -121,7 +121,7 @@ train_set = TranslationDataset(train_examples, tokenizer, MAX_TOKENS)
 valid_set = TranslationDataset(val_examples, tokenizer, MAX_TOKENS)
 
 # Batch the dataset with a dataloader.
-BATCH_SIZE = 64
+BATCH_SIZE = 16#64
 train_loader = DataLoader(
     train_set, 
     batch_size=BATCH_SIZE,
