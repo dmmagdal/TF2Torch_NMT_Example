@@ -36,6 +36,7 @@ if torch.cuda.is_available():
     device = "cuda"
 if torch.backends.mps.is_available():
     device = "mps"
+print(f"Compute Device chosen: {device}")
 
 # Load the data.
 data = load_dataset("ted_hrlr", "pt_to_en")
@@ -295,6 +296,7 @@ class Transformer(nn.Module):
         tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
         seq_length = tgt.size(1)
         nopeak_mask = (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1)).bool()
+        nopeak_mask = nopeak_mask.to(tgt_mask.device) # Code added by me. Had to add device logic so all tensors went to same device.
         tgt_mask = tgt_mask & nopeak_mask
         return src_mask, tgt_mask
 
@@ -337,6 +339,7 @@ transformer = Transformer(src_vocab_size, tgt_vocab_size, d_model, num_heads, nu
 transformer = Transformer(
     src_vocab_size, tgt_vocab_size, d_model, num_heads, num_layers, d_ff, max_seq_length, dropout
 )
+transformer.to(device)
 
 # Train the model.
 criterion = nn.CrossEntropyLoss(ignore_index=0)
@@ -350,11 +353,24 @@ for epoch in range(100):
     for i, data in enumerate(train_loader):
         src_data = data["pt"]
         tgt_data = data["en_labels"]
+        tgt_input = data["en_inputs"]
+
+        src_data = src_data.to(device)
+        tgt_data = tgt_data.to(device)
+        tgt_input = tgt_input.to(device)
+
+        # Check shapes. Expected to be just (batch_size, MAX_TOKENS).
+        # print(f"src_data: {src_data.shape}")    # (batch_size, 1, MAX_TOKENS)
+        # print(f"tgt_data: {tgt_data.shape}")    # (batch_size, 1, MAX_TOKENS - 1)
+        # print(f"tgt_input: {tgt_input.shape}")  # (batch_size, 1, MAX_TOKENS - 1)
+        src_data = src_data.squeeze(1)
+        tgt_data = tgt_data.squeeze(1)
+        tgt_input = tgt_input.squeeze(1)
 
         optimizer.zero_grad()
         # output = transformer(src_data, tgt_data[:, :-1])
         # loss = criterion(output.contiguous().view(-1, tgt_vocab_size), tgt_data[:, 1:].contiguous().view(-1))
-        output = transformer(src_data, tgt_data)
+        output = transformer(src_data, tgt_input)
         loss = criterion(output.contiguous().view(-1, tgt_vocab_size), tgt_data.contiguous().view(-1))
         loss.backward()
         loss_total += loss.item()
@@ -368,13 +384,34 @@ for epoch in range(100):
 transformer.eval()
 
 # Generate random sample validation data
-val_src_data = torch.randint(1, src_vocab_size, (64, max_seq_length))  # (batch_size, seq_length)
-val_tgt_data = torch.randint(1, tgt_vocab_size, (64, max_seq_length))  # (batch_size, seq_length)
+# val_src_data = torch.randint(1, src_vocab_size, (64, max_seq_length))  # (batch_size, seq_length)
+# val_tgt_data = torch.randint(1, tgt_vocab_size, (64, max_seq_length))  # (batch_size, seq_length)
 
 with torch.no_grad():
 
-    val_output = transformer(val_src_data, val_tgt_data[:, :-1])
-    val_loss = criterion(val_output.contiguous().view(-1, tgt_vocab_size), val_tgt_data[:, 1:].contiguous().view(-1))
-    print(f"Validation Loss: {val_loss.item()}")
+    val_loss_total = 0
+    counter = 0
+    for i, data in enumerate(valid_loader):
+        val_src_data = data["pt"]
+        val_tgt_data = data["en_labels"]
+        val_tgt_input = data["en_inputs"]
+
+        val_src_data = val_src_data.to(device)
+        val_tgt_data = val_tgt_data.to(device)
+        val_tgt_input = val_tgt_input.to(device)
+
+        val_src_data = val_src_data.squeeze(1)
+        val_tgt_data = val_tgt_data.squeeze(1)
+        val_tgt_input = val_tgt_input.squeeze(1)
+
+        # val_output = transformer(val_src_data, val_tgt_data[:, :-1])
+        # val_loss = criterion(val_output.contiguous().view(-1, tgt_vocab_size), val_tgt_data[:, 1:].contiguous().view(-1))
+        val_output = transformer(val_src_data, val_tgt_input)
+        val_loss = criterion(val_output.contiguous().view(-1, tgt_vocab_size), val_tgt_data.contiguous().view(-1))
+        val_loss_total += val_loss.item()
+        counter += 1
+    val_loss = val_loss_total / counter
+    # print(f"Validation Loss: {val_loss.item()}")
+    print(f"Validation Loss: {val_loss}")
 
 exit()
